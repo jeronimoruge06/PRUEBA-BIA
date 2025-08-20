@@ -176,12 +176,12 @@ SELECT contract_id,
 FROM BIA.consumptions 
 WHERE YEAR(date) = 2024 
     AND MONTH(date) = 7
-    AND deleted_at = ''    -- Corrección: se usa cadena vacía para evitar problemas con NULLS
+    AND deleted_at = ''    -- Correccion: se usa cadena vacia para evitar problemas con NULLS
 GROUP BY contract_id
 ORDER BY kwh_total DESC;
 
 -- =====================================================
--- 5. PERFORMANCE & DISEÑO - INDICES POSIBLES RECOMENDADOS
+-- 5. PERFORMANCE & DISEÑO - INDICES POSIBLES 
 -- =====================================================
 
 -- Para optimizar las consultas de consumos y anomalias (2):
@@ -202,6 +202,121 @@ ORDER BY kwh_total DESC;
 -- =====================================================
 
 -- =====================================================
--- 1. KPI DE NEGOCIO - TABLA POR PERÍODO
+-- 1. KPI DE NEGOCIO - TABLA POR PERÍODO EN EL ARCHIVO KPI.sql
 -- =====================================================
+
+
+
+-- =====================================================
+-- 2. DATA QUALITY CHECKS - 5 REGLAS DE CONTROL
+-- =====================================================
+
+--  REGLA 1: Integridad referencial completa
+
+SELECT 'Integridad Referencial' as categoria,
+    'Contratos huérfanos' as regla,
+    COUNT(*) as registros_problematicos,
+    'CRITICO' as severidad,
+    GROUP_CONCAT(c.contract_id SEPARATOR '; ') as elementos_afectados
+FROM BIA.contracts c
+LEFT JOIN BIA.companies comp ON c.company_id = comp.company_id
+WHERE comp.company_id IS NULL
+
+UNION ALL
+
+SELECT 
+    'Integridad Referencial' as categoria,
+    'Facturas sin contrato válido' as regla,
+    COUNT(*) as registros_problematicos,
+    'CRÍTICO' as severidad,
+    GROUP_CONCAT(b.id SEPARATOR '; ') as elementos_afectados
+FROM BIA.bills b
+LEFT JOIN BIA.contracts c ON b.contract_id = c.contract_id
+WHERE c.contract_id IS NULL
+
+UNION ALL
+
+--  REGLA 2: Consistencia temporal y logica de negocio
+SELECT 
+    'Consistencia Temporal' as categoria,
+    'Fechas inconsistentes en contratos' as regla,
+    COUNT(*) as registros_problematicos,
+    'ALTO' as severidad,
+    GROUP_CONCAT(contract_id SEPARATOR '; ') as elementos_afectados
+FROM BIA.contracts
+WHERE end_date IS NOT NULL AND start_date IS NOT NULL AND end_date < start_date
+
+UNION ALL
+
+SELECT 
+    'Consistencia Temporal' as categoria,
+    'Pagos antes de fecha de corte' as regla,
+    COUNT(*) as registros_problematicos,
+    'MEDIO' as severidad,
+    GROUP_CONCAT(p.id SEPARATOR '; ') as elementos_afectados
+FROM BIA.payments p
+INNER JOIN BIA.bills b ON p.bill_id = b.id
+WHERE p.paid_at < b.cuttoff_date AND p.status = 'paid'
+
+UNION ALL
+
+--  REGLA 3: Valores de dominio y los rangos validos
+SELECT 
+    'Valores de Dominio' as categoria,
+    'Consumos fuera de rango valido' as regla,
+    COUNT(*) as registros_problematicos,
+    'ALTO' as severidad,
+    CONCAT('kWh negativos: ', 
+           SUM(CASE WHEN kwh < 0 THEN 1 ELSE 0 END),
+           ', kWh extremos (>15000): ',
+           SUM(CASE WHEN kwh > 15000 THEN 1 ELSE 0 END)) as elementos_afectados
+FROM BIA.consumptions
+WHERE (kwh < 0 OR kwh > 15000) AND deleted_at IS NULL
+
+UNION ALL
+
+SELECT 
+    'Valores de Dominio' as categoria,
+    'Facturas con montos invalidos' as regla,
+    COUNT(*) as registros_problematicos,
+    'CRITICO' as severidad,
+    CONCAT('Montos negativos o cero: ', COUNT(*)) as elementos_afectados
+FROM BIA.bills
+WHERE total <= 0
+
+UNION ALL
+
+--  REGLA 4: Completitud de datos criticos
+SELECT 
+    'Completitud de Datos' as categoria,
+    'Campos obligatorios faltantes' as regla,
+    (SELECT COUNT(*) FROM BIA.companies WHERE name IS NULL OR name = '') +
+    (SELECT COUNT(*) FROM BIA.contracts WHERE company_id IS NULL) +
+    (SELECT COUNT(*) FROM BIA.bills WHERE contract_id IS NULL OR period IS NULL) as registros_problematicos,
+    'CRÍTICO' as severidad,
+    'Empresas sin nombre, contratos sin company_id, facturas sin contrato/período' as elementos_afectados
+
+UNION ALL
+
+--  REGLA 5: Duplicados y unicos
+SELECT 
+    'Duplicados' as categoria,
+    'Consumos duplicados por contrato-fecha-hora' as regla,
+    COUNT(*) - COUNT(DISTINCT CONCAT(contract_id, DATE(date), hour, IFNULL(meter_id, 'NULL'))) as registros_problematicos,
+    'ALTO' as severidad,
+    'Registros duplicados en mediciones horarias' as elementos_afectados
+FROM BIA.consumptions
+WHERE deleted_at IS NULL
+
+UNION ALL
+
+SELECT 
+    'Duplicados' as categoria,
+    'Pagos multiples por factura' as regla,
+    COUNT(*) - COUNT(DISTINCT bill_id) as registros_problematicos,
+    'MEDIO' as severidad,
+    'Facturas con multiples pagos exitosos' as elementos_afectados
+FROM BIA.payments
+WHERE status = 'paid';
+
 
