@@ -37,7 +37,7 @@ SELECT b.period,
 
 FROM bills b
 LEFT JOIN payments p ON b.id = p.bill_id AND p.status = 'completed'
-WHERE b.status IS NOT NULL
+WHERE b.status IS NOT NULL AND b.status <> ''
 GROUP BY b.period
 ORDER BY b.period;
 
@@ -50,7 +50,7 @@ WITH consumo_promedio AS (
         contract_id,
         AVG(kwh) as kwh_promedio
     FROM consumptions 
-    WHERE deleted_at IS NULL
+    WHERE deleted_at = ''
       AND kwh > 0                                                 -- Excluiyo los consumos en 0
     GROUP BY contract_id
     HAVING COUNT(*) >= 7                                -- Al menos 7 dias de datos para calcular un promedio confiable
@@ -69,7 +69,7 @@ dias_anomalia AS (
         END as es_anomalia
     FROM consumptions c
     JOIN consumo_promedio cp ON c.contract_id = cp.contract_id
-    WHERE c.deleted_at IS NULL
+    WHERE c.deleted_at = ''
       AND c.kwh > 0
 ),
 
@@ -129,7 +129,7 @@ SELECT
     COUNT(*) as facturas_nuevas_contribution
 FROM facturas_ordenadas
 WHERE tiene_contribution = 1  -- Factura actual tiene contribution
-  AND (contribution_factura_anterior = 0 OR contribution_factura_anterior IS NULL)  -- La anterior no tenía
+  AND (contribution_factura_anterior = 0 OR contribution_factura_anterior IS NULL)  -- No tenia una contribution en la factura anterior
 GROUP BY period
 ORDER BY period;
 
@@ -150,7 +150,7 @@ SELECT
     COALESCE(nuevas_contrib.facturas_nuevas_contribution, 0) as facturas_nuevas_contribution
     
 FROM (
-    -- KPI principal con facturación y recuperación
+    -- KPI principal con facturacion y recuperacion
     SELECT 
         b.period,
         SUM(b.total) as facturado_total,
@@ -162,16 +162,16 @@ FROM (
         ROUND(SUM(CASE WHEN p.paid_at <= DATE_ADD(b.cuttoff_date, INTERVAL 60 DAY) THEN b.total ELSE 0 END) / SUM(b.total) * 100, 1) as recuperacion_60_dias_pct
     FROM bills b
     LEFT JOIN payments p ON b.id = p.bill_id AND p.status = 'completed'
-    WHERE b.status IS NOT NULL
+    WHERE b.status IS NOT NULL AND b.status <> ''
     GROUP BY b.period
 ) kpi
 
 LEFT JOIN (
-    -- Subquery de anomalías (usar la consulta auxiliar 1 completa)
+    -- Subquery de anomalias (usar la consulta auxiliar 1 completa)
     WITH consumo_promedio AS (
         SELECT contract_id, AVG(kwh) as kwh_promedio
         FROM consumptions 
-        WHERE deleted_at IS NULL AND kwh > 0
+        WHERE deleted_at = '' AND kwh > 0
         GROUP BY contract_id
         HAVING COUNT(*) >= 7
     ),
@@ -180,7 +180,7 @@ LEFT JOIN (
                CASE WHEN cp.kwh_promedio > 0 AND (c.kwh > cp.kwh_promedio * 1.5 OR c.kwh < cp.kwh_promedio * 0.5) THEN 1 ELSE 0 END as es_anomalia
         FROM consumptions c
         JOIN consumo_promedio cp ON c.contract_id = cp.contract_id
-        WHERE c.deleted_at IS NULL AND c.kwh > 0
+        WHERE c.deleted_at = '' AND c.kwh > 0
     ),
     contratos_anomalias_periodo AS (
         SELECT da.contract_id, b.period, COUNT(*) as dias_con_anomalia

@@ -319,4 +319,3 @@ SELECT
 FROM BIA.payments
 WHERE status = 'paid';
 
-
